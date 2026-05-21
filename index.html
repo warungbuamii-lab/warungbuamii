@@ -1,0 +1,467 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>WarungKu POS (Cloud Mode)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
+<script>
+  tailwind.config = {
+    theme: {
+      extend: {
+        fontFamily: { sans: ['Plus Jakarta Sans', 'sans-serif'], mono: ['JetBrains Mono', 'monospace'] },
+        colors: {
+          brand: { 50:'#fff7ed', 100:'#ffedd5', 200:'#fed7aa', 300:'#fdba74', 400:'#fb923c', 500:'#f97316', 600:'#ea580c', 700:'#c2410c', 800:'#9a3412', 900:'#7c2d12' },
+          surface: { DEFAULT:'#fafaf9', card:'#ffffff', border:'#e7e5e4' },
+        }
+      }
+    }
+  }
+</script>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: 'Plus Jakarta Sans', sans-serif; background: #fafaf9; }
+  ::-webkit-scrollbar { width: 5px; height: 5px; }
+  ::-webkit-scrollbar-track { background: #f5f5f4; }
+  ::-webkit-scrollbar-thumb { background: #d6d3d1; border-radius: 99px; }
+  .tab-btn.active { background: #ea580c; color: #fff; box-shadow: 0 2px 8px rgba(234,88,12,0.3); }
+  .menu-card:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(0,0,0,0.09); }
+  .menu-card { transition: all 0.2s ease; }
+  .badge { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 99px; }
+  .modal-backdrop { backdrop-filter: blur(4px); }
+  .fade-up { animation: fadeUp 0.25s ease; }
+  @keyframes fadeUp { from { opacity:0; transform:translateY(12px); } to { opacity:1; transform:translateY(0); } }
+  .cart-item { transition: background 0.15s; }
+  .cart-item:hover { background: #fff7ed; }
+  input:focus, select:focus, textarea:focus { outline: none; border-color: #ea580c !important; box-shadow: 0 0 0 3px rgba(234,88,12,0.12); }
+  .debt-bar { height: 6px; border-radius: 99px; background: #e7e5e4; overflow: hidden; }
+  .debt-bar-fill { height: 100%; border-radius: 99px; background: linear-gradient(90deg, #ea580c, #fb923c); transition: width 0.5s ease; }
+  .btn-primary { background: #ea580c; color: #fff; transition: background 0.15s, transform 0.1s; }
+  .btn-primary:hover { background: #c2410c; }
+  .btn-primary:active { transform: scale(0.97); }
+  .stat-card { background: white; border-radius: 16px; border: 1px solid #e7e5e4; padding: 20px; }
+  .cat-chip { cursor: pointer; border: 1.5px solid #e7e5e4; border-radius: 99px; padding: 4px 14px; font-size: 13px; font-weight: 600; transition: all 0.15s; }
+  .cat-chip.active { border-color: #ea580c; background: #fff7ed; color: #ea580c; }
+</style>
+</head>
+<body class="min-h-screen">
+
+<div id="loading-screen" class="fixed inset-0 z-50 bg-stone-900 text-white flex flex-col items-center justify-center p-6 text-center">
+  <div class="w-16 h-16 border-4 border-orange-500 border-t-transparent rounded-full animate-spin mb-4"></div>
+  <h2 class="text-xl font-black tracking-tight mb-1">Menghubungkan ke Server Cloud...</h2>
+  <p class="text-sm text-stone-400 max-w-xs leading-relaxed">Aplikasi sedang menyinkronkan data bon Warung Bu AMI secara real-time.</p>
+</div>
+
+<div class="flex min-h-screen">
+  <aside class="fixed top-0 left-0 z-30 h-full w-60 bg-white border-r border-stone-200 flex flex-col shadow-sm">
+    <div class="px-6 py-5 border-b border-stone-100">
+      <div class="flex items-center gap-3">
+        <div class="w-9 h-9 rounded-xl bg-brand-600 flex items-center justify-center text-white font-bold">W</div>
+        <div>
+          <div class="font-extrabold text-stone-800 text-sm leading-tight">Warung Bu AMI</div>
+          <div class="text-xs text-stone-400 font-medium">Cloud POS System</div>
+        </div>
+      </div>
+    </div>
+    <nav class="flex-1 px-3 py-4 space-y-1">
+      <button onclick="navigasi('kasir')" id="nav-kasir" class="tab-btn active w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold text-left">Kasir</button>
+      <button onclick="navigasi('menu')" id="nav-menu" class="tab-btn w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold text-left text-stone-600">Kelola Menu</button>
+      <button onclick="navigasi('utang')" id="nav-utang" class="tab-btn w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold text-left text-stone-600">Catatan Utang <span id="badge-utang" class="ml-auto badge bg-red-100 text-red-600 hidden">0</span></button>
+    </nav>
+    <div class="px-5 py-4 border-t border-stone-100">
+      <div id="jam-display" class="font-mono text-xl font-semibold text-stone-700"></div>
+      <div id="tanggal-display" class="text-xs text-stone-400 mt-0.5"></div>
+    </div>
+  </aside>
+
+  <main class="ml-60 flex-1 min-h-screen">
+    <div id="page-kasir" class="flex h-screen">
+      <div class="flex-1 flex flex-col h-screen overflow-hidden">
+        <div class="bg-white border-b border-stone-200 px-6 py-4">
+          <h1 class="text-lg font-extrabold text-stone-800">Kasir</h1>
+          <div class="mt-3 relative">
+            <input id="search-kasir" type="text" placeholder="Cari menu..." oninput="renderMenuKasir()" class="w-full pl-4 pr-4 py-2 text-sm border border-stone-200 rounded-xl bg-stone-50">
+          </div>
+          <div id="filter-kategori" class="flex gap-2 mt-3 overflow-x-auto pb-1 flex-nowrap"></div>
+        </div>
+        <div id="grid-menu-kasir" class="flex-1 overflow-y-auto p-5 grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 content-start"></div>
+      </div>
+      <div class="w-80 bg-white border-l border-stone-200 flex flex-col h-screen">
+        <div class="px-5 py-4 border-b border-stone-100 flex items-center justify-between">
+          <h2 class="font-extrabold text-stone-800">Keranjang</h2>
+          <button onclick="kosongkanKeranjang()" class="text-xs text-red-400 hover:text-red-600 font-semibold">Kosongkan</button>
+        </div>
+        <div id="list-keranjang" class="flex-1 overflow-y-auto px-4 py-3 space-y-2"></div>
+        <div class="border-t border-stone-100 px-5 py-4 space-y-2 bg-stone-50">
+          <div class="flex justify-between font-extrabold text-stone-800 text-base pt-1"><span>TOTAL</span><span id="total-text" class="text-brand-600">Rp 0</span></div>
+          <button onclick="bukaBayar()" class="btn-primary w-full py-3 rounded-xl font-bold text-sm mt-1">Proses Pembayaran →</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="page-menu" class="hidden p-6">
+      <div class="flex items-center justify-between mb-6">
+        <h1 class="text-xl font-extrabold text-stone-800">Kelola Menu</h1>
+        <button onclick="bukaFormMenu()" class="btn-primary px-4 py-2 rounded-xl text-sm font-bold">Tambah Menu</button>
+      </div>
+      <div id="stat-menu" class="grid grid-cols-3 gap-4 mb-6"></div>
+      <div class="bg-white rounded-2xl border border-stone-200 overflow-hidden">
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead class="bg-stone-50 text-stone-500 text-xs uppercase">
+              <tr>
+                <th class="text-left px-5 py-3 font-semibold">Nama</th>
+                <th class="text-left px-5 py-3 font-semibold">Kategori</th>
+                <th class="text-right px-5 py-3 font-semibold">Harga</th>
+                <th class="text-center px-5 py-3 font-semibold">Aksi</th>
+              </tr>
+            </thead>
+            <tbody id="tbody-menu" class="divide-y divide-stone-100"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <div id="page-utang" class="hidden p-6">
+      <div class="flex items-center justify-between mb-6">
+        <h1 class="text-xl font-extrabold text-stone-800">Catatan & Rekap Utang</h1>
+        <div id="total-utang-badge" class="bg-red-50 border border-red-200 rounded-xl px-4 py-2 text-sm font-bold text-red-600">Total Piutang: Rp 0</div>
+      </div>
+      <div id="stat-utang" class="grid grid-cols-3 gap-4 mb-6"></div>
+      <div id="list-utang" class="space-y-4"></div>
+    </div>
+  </main>
+</div>
+
+<div id="modal-bayar" class="hidden fixed inset-0 z-50 flex items-center justify-center modal-backdrop bg-black/40">
+  <div class="bg-white rounded-2xl w-full max-w-md mx-4 shadow-2xl p-6 space-y-4">
+    <h3 class="font-extrabold text-stone-800 text-lg">Pilih Metode Pembayaran</h3>
+    <div class="grid grid-cols-2 gap-3">
+      <button onclick="pilihMetode('tunai')" id="btn-tunai" class="border-2 border-brand-600 bg-brand-50 text-brand-700 font-bold py-3 rounded-xl text-sm">💵 Tunai</button>
+      <button onclick="pilihMetode('utang')" id="btn-utang" class="border-2 border-stone-200 text-stone-600 font-bold py-3 rounded-xl text-sm">📝 Bon / Utang</button>
+    </div>
+    <div id="form-tunai" class="space-y-2">
+      <label class="text-sm font-medium text-stone-600">Uang Tunai Diterima</label>
+      <input id="input-bayar" type="number" oninput="hitungKembalian()" class="w-full border border-stone-200 rounded-xl px-4 py-2 text-sm" placeholder="Masukkan jumlah uang...">
+      <div class="text-sm font-bold mt-2" id="text-kembalian">Kembalian: Rp 0</div>
+    </div>
+    <div id="form-utang" class="hidden space-y-2">
+      <label class="text-sm font-medium text-stone-600">Nama Pelanggan (Wajib)</label>
+      <input id="input-nama-utang" type="text" class="w-full border border-stone-200 rounded-xl px-4 py-2 text-sm" placeholder="Masukkan nama pelanggan...">
+    </div>
+    <div class="flex gap-2 pt-2">
+      <button onclick="tutupModal('modal-bayar')" class="w-1/2 py-2.5 border border-stone-200 rounded-xl text-sm font-semibold">Batal</button>
+      <button onclick="konfirmasiBayar()" class="w-1/2 btn-primary py-2.5 rounded-xl font-bold text-sm">Konfirmasi</button>
+    </div>
+  </div>
+</div>
+
+<div id="modal-cicil" class="hidden fixed inset-0 z-50 flex items-center justify-center modal-backdrop bg-black/40">
+  <div class="bg-white rounded-2xl w-full max-w-md mx-4 shadow-2xl p-6 space-y-4">
+    <h3 class="font-extrabold text-stone-800">Cicil / Lunasi Utang</h3>
+    <input type="hidden" id="cicil-pelanggan-id">
+    <div class="bg-red-50 p-4 rounded-xl text-red-600 font-bold text-xl font-mono" id="cicil-sisa"></div>
+    <input id="cicil-jumlah" type="number" class="w-full border border-stone-200 rounded-xl px-4 py-2.5 text-sm" placeholder="Jumlah pembayaran cicilan...">
+    <div class="flex gap-2">
+      <button onclick="lunasiSemua()" class="w-1/2 bg-green-600 text-white py-2.5 rounded-xl text-sm font-bold">✓ Lunasi Semua</button>
+      <button onclick="simpanCicilan()" class="w-1/2 btn-primary py-2.5 rounded-xl text-sm font-bold">Bayar Cicilan</button>
+    </div>
+  </div>
+</div>
+
+<div id="modal-detail-utang" class="hidden fixed inset-0 z-50 flex items-center justify-center modal-backdrop bg-black/40">
+  <div class="bg-white rounded-2xl w-full max-w-lg mx-4 shadow-2xl p-6 max-h-[80vh] flex flex-col">
+    <h3 id="detail-utang-judul" class="font-extrabold text-stone-800 mb-3 text-lg">Riwayat Utang</h3>
+    <div id="detail-utang-konten" class="overflow-y-auto flex-1 space-y-3"></div>
+    <button onclick="tutupModal('modal-detail-utang')" class="mt-4 border w-full py-2 rounded-xl text-sm font-bold">Tutup</button>
+  </div>
+</div>
+
+<div id="toast" class="hidden fixed bottom-6 right-6 z-50 bg-stone-800 text-white px-5 py-3 rounded-xl text-sm shadow-xl">
+  <span id="toast-text"></span>
+</div>
+
+<script>
+// ==========================================
+// CONFIGURASI CLOUD FIREBASE BU AMI
+// ==========================================
+const firebaseConfig = {
+    databaseURL: "https://warungbuami-default-rtdb.asia-southeast1.firebasedatabase.app/"
+};
+firebase.initializeApp(firebaseConfig);
+const db = firebase.database();
+
+// PENGAMAN 4 DETIK: Jika server Firebase lambat, paksa masuk dengan data lokal
+setTimeout(() => {
+    const loadingScreen = document.getElementById('loading-screen');
+    if (loadingScreen && !loadingScreen.classList.contains('hidden')) {
+        console.log("Firebase lambat, membuka dengan data lokal...");
+        loadingScreen.classList.add('hidden');
+        renderHalamanUtang();
+    }
+}, 4000);
+
+// STATE UTAMA APLIKASI
+let daftarMenu = [];
+let keranjang = [];
+let dataUtang = [];
+let filterKatAktif = 'Semua';
+let metodeBayar = 'tunai';
+let targetCicilId = '';
+
+function formatRupiah(a) { return 'Rp ' + Number(a).toLocaleString('id-ID'); }
+function buatId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
+function showToast(p) { document.getElementById('toast-text').textContent = p; document.getElementById('toast').classList.remove('hidden'); setTimeout(() => document.getElementById('toast').classList.add('hidden'), 2000); }
+function tutupModal(id) { document.getElementById(id).classList.add('hidden'); }
+
+// NAVIGASI
+function navigasi(h) {
+  ['kasir','menu','utang'].forEach(p => {
+    document.getElementById('page-' + p).classList.add('hidden');
+    document.getElementById('nav-' + p).classList.remove('active');
+  });
+  document.getElementById('page-' + h).classList.remove('hidden');
+  document.getElementById('nav-' + h).classList.add('active');
+  if(h==='kasir') { renderFilterKategori(); renderMenuKasir(); }
+  if(h==='menu') { renderStatMenu(); renderTabelMenu(); }
+  if(h==='utang') { renderHalamanUtang(); }
+}
+
+// SINKRONISASI DATABASE REALTIME DENGAN FIREBASE CLOUD
+db.ref('warung_pos_data').on('value', snapshot => {
+  const data = snapshot.val();
+  if (data) {
+    daftarMenu = data.menu || [];
+    dataUtang = data.utang || [];
+  } else {
+    // Default menu jika database firebase kosong pertama kali
+    daftarMenu = [
+      { id: 'm1', nama: 'Nasi Goreng', kategori: 'Makanan', harga: 15000 },
+      { id: 'm2', nama: 'Mie Goreng', kategori: 'Makanan', harga: 12000 },
+      { id: 'm3', nama: 'Ayam Goreng', kategori: 'Makanan', harga: 18000 },
+      { id: 'm4', nama: 'Es Teh Manis', kategori: 'Minuman', harga: 5000 },
+      { id: 'm5', nama: 'Kopi Hitam', kategori: 'Minuman', harga: 7000 }
+    ];
+    uploadKeFirebase();
+  }
+  
+  // Sembunyikan layar loading karena server sukses terhubung!
+  document.getElementById('loading-screen').classList.add('hidden');
+  
+  // Segarkan seluruh halaman aplikasi
+  renderFilterKategori();
+  renderMenuKasir();
+  renderTabelMenu();
+  renderHalamanUtang();
+  updateBadgeUtang();
+});
+
+function uploadKeFirebase() {
+  db.ref('warung_pos_data').set({ menu: daftarMenu, utang: dataUtang });
+}
+
+// LOGIKA KASIR & KERANJANG
+function renderFilterKategori() {
+  const cats = ['Semua', ...new Set(daftarMenu.map(m=>m.kategori))];
+  document.getElementById('filter-kategori').innerHTML = cats.map(k =>
+    `<button onclick="filterKatAktif='${k}';renderFilterKategori();renderMenuKasir();" class="cat-chip ${k===filterKatAktif?'active':''}">${k}</button>`
+  ).join('');
+}
+
+function renderMenuKasir() {
+  const q = (document.getElementById('search-kasir').value || '').toLowerCase();
+  let f = daftarMenu;
+  if(q) f = f.filter(m=>m.nama.toLowerCase().includes(q));
+  if(filterKatAktif!=='Semua') f = f.filter(m=>m.kategori===filterKatAktif);
+  
+  document.getElementById('grid-menu-kasir').innerHTML = f.map(m=>`
+    <div class="menu-card bg-white border border-stone-200 rounded-2xl p-4 flex flex-col gap-2 cursor-pointer" onclick="tambahKeKeranjang('${m.id}')">
+      <div class="font-bold text-stone-800 text-sm leading-tight">${m.nama}</div>
+      <div class="text-brand-600 font-extrabold text-sm font-mono mt-auto">${formatRupiah(m.harga)}</div>
+    </div>
+  `).join('');
+}
+
+function tambahKeKeranjang(id) {
+  const m = daftarMenu.find(x=>x.id===id);
+  const idx = keranjang.findIndex(k=>k.menuId===id);
+  if(idx>=0) { keranjang[idx].qty++; } else { keranjang.push({ menuId:id, nama:m.nama, harga:m.harga, qty:1 }); }
+  renderKeranjang();
+}
+
+function renderKeranjang() {
+  const tot = keranjang.reduce((a,i)=>a+(i.harga*i.qty), 0);
+  document.getElementById('total-text').textContent = formatRupiah(tot);
+  document.getElementById('list-keranjang').innerHTML = keranjang.map(i=>`
+    <div class="flex justify-between items-center bg-stone-50 p-2 rounded-xl text-sm">
+      <div><div><b>${i.nama}</b></div><div class="text-xs text-stone-400">${formatRupiah(i.harga)} x${i.qty}</div></div>
+      <div class="flex gap-1"><button class="px-2 bg-stone-200 rounded" onclick="ubahQty('${i.menuId}',-1)">-</button><button class="px-2 bg-stone-200 rounded" onclick="ubahQty('${i.menuId}',1)">+</button></div>
+    </div>
+  `).join('');
+}
+
+function ubahQty(id, d) {
+  const idx = keranjang.findIndex(k=>k.menuId===id);
+  keranjang[idx].qty += d;
+  if(keranjang[idx].qty<=0) keranjang.splice(idx,1);
+  renderKeranjang();
+}
+function kosongkanKeranjang() { keranjang=[]; renderKeranjang(); }
+
+// TRANSAKSI & PEMBAYARAN BON UTANG
+function bukaBayar() {
+  if(keranjang.length===0) return;
+  document.getElementById('modal-bayar').classList.remove('hidden');
+  pilihMetode('tunai');
+}
+function pilihMetode(m) {
+  metodeBayar = m;
+  document.getElementById('btn-tunai').className = m==='tunai'?'border-2 border-brand-600 bg-brand-50 text-brand-700 font-bold py-3 rounded-xl text-sm':'border-2 border-stone-200 py-3 rounded-xl text-sm';
+  document.getElementById('btn-utang').className = m==='utang'?'border-2 border-brand-600 bg-brand-50 text-brand-700 font-bold py-3 rounded-xl text-sm':'border-2 border-stone-200 py-3 rounded-xl text-sm';
+  document.getElementById('form-tunai').classList.toggle('hidden', m!=='tunai');
+  document.getElementById('form-utang').classList.toggle('hidden', m!=='utang');
+}
+function hitungKembalian() {
+  const tot = keranjang.reduce((a,i)=>a+(i.harga*i.qty), 0);
+  const m = parseFloat(document.getElementById('input-bayar').value)||0;
+  document.getElementById('text-kembalian').textContent = 'Kembalian: ' + formatRupiah(m - tot);
+}
+
+function konfirmasiBayar() {
+  const tot = keranjang.reduce((a,i)=>a+(i.harga*i.qty), 0);
+  if (metodeBayar === 'tunai') {
+    showToast('Transaksi Tunai Berhasil!');
+  } else {
+    const nama = document.getElementById('input-nama-utang').value.trim();
+    if(!nama) return;
+    let p = dataUtang.find(x=>x.nama.toLowerCase() === nama.toLowerCase());
+    if(!p) { p = { id: buatId(), nama: nama, totalUtang: 0, riwayat: [] }; dataUtang.push(p); }
+    
+    p.totalUtang += tot;
+    p.riwayat.unshift({
+      id: buatId(),
+      tipe: 'belanja',
+      waktu: new Date().toLocaleDateString('id-ID'),
+      total: tot,
+      items: [...keranjang]
+    });
+    uploadKeFirebase();
+    showToast('Bon Utang Berhasil Dicatat!');
+  }
+  keranjang = [];
+  renderKeranjang();
+  tutupModal('modal-bayar');
+}
+
+// MANAGEMENT REKAP UTANG PELANGGAN
+function updateBadgeUtang() {
+  const aktif = dataUtang.filter(p=>p.totalUtang>0).length;
+  document.getElementById('badge-utang').textContent = aktif;
+  document.getElementById('badge-utang').classList.toggle('hidden', aktif===0);
+}
+
+function renderHalamanUtang() {
+  const totalPiutang = dataUtang.reduce((a,p)=>a+p.totalUtang, 0);
+  document.getElementById('total-utang-badge').textContent = `Total Piutang: ${formatRupiah(totalPiutang)}`;
+  
+  const aktif = dataUtang.filter(p=>p.totalUtang>0).length;
+  const lunas = dataUtang.filter(p=>p.totalUtang<=0).length;
+  document.getElementById('stat-utang').innerHTML = `
+    <div class="stat-card"><div class="text-2xl font-extrabold text-red-500">${aktif}</div><div class="text-xs text-stone-500">Pelanggan Berbon</div></div>
+    <div class="stat-card"><div class="text-2xl font-extrabold text-green-500">${lunas}</div><div class="text-xs text-stone-500">Sudah Lunas</div></div>
+  `;
+
+  document.getElementById('list-utang').innerHTML = dataUtang.map(p=>`
+    <div class="bg-white border p-4 rounded-2xl flex flex-col gap-2">
+      <div class="flex justify-between items-center">
+        <div><span class="font-bold text-stone-800">${p.nama}</span></div>
+        <div class="font-bold font-mono ${p.totalUtang>0?'text-red-600':'text-green-600'}">${p.totalUtang>0?formatRupiah(p.totalUtang):'✓ Lunas'}</div>
+      </div>
+      <div class="flex gap-2 mt-2">
+        <button onclick="bukaDetailUtang('${p.id}')" class="flex-1 py-1.5 border rounded-xl text-xs font-semibold bg-stone-50">📋 Riwayat Recap</button>
+        ${p.totalUtang>0?`<button onclick="bukaCicil('${p.id}')" class="flex-1 py-1.5 btn-primary rounded-xl text-xs font-bold">💰 Bayar/Cicil</button>`:''}
+      </div>
+    </div>
+  `).join('');
+}
+
+function bukaDetailUtang(id) {
+  const p = dataUtang.find(x=>x.id===id);
+  document.getElementById('detail-utang-judul').textContent = `Recap Bon — ${p.nama}`;
+  document.getElementById('detail-utang-konten').innerHTML = p.riwayat.map(r=>`
+    <div class="border p-3 rounded-xl text-xs bg-stone-50">
+      <div class="flex justify-between mb-1"><b>${r.tipe==='belanja'?'🔴 Ambil Bon':'🟢 Pembayaran'}</b> <span class="text-stone-400">${r.waktu}</span></div>
+      <div class="space-y-0.5">${r.items?r.items.map(i=>`<div>${i.nama} x${i.qty}</div>`).join(''):''}</div>
+      <div class="text-right font-bold border-t mt-1 pt-1 text-sm ${r.tipe==='belanja'?'text-red-500':'text-green-600'}">${r.tipe==='belanja'?'-':'+'}${formatRupiah(r.total)}</div>
+    </div>
+  `).join('');
+  document.getElementById('modal-detail-utang').classList.remove('hidden');
+}
+
+function bukaCicil(id) {
+  targetCicilId = id;
+  const p = dataUtang.find(x=>x.id===id);
+  document.getElementById('cicil-sisa').textContent = `Sisa Utang: ${formatRupiah(p.totalUtang)}`;
+  document.getElementById('modal-cicil').classList.remove('hidden');
+}
+function simpanCicilan() {
+  const amt = parseFloat(document.getElementById('cicil-jumlah').value)||0;
+  if(amt<=0) return;
+  const p = dataUtang.find(x=>x.id===targetCicilId);
+  p.totalUtang -= amt;
+  p.riwayat.unshift({ id:buatId(), tipe:'bayar', waktu:new Date().toLocaleDateString('id-ID'), total:amt, items:[{nama:'Cicilan Bayar', qty:1, harga:amt}] });
+  uploadKeFirebase();
+  tutupModal('modal-cicil');
+}
+function lunasiSemua() {
+  const p = dataUtang.find(x=>x.id===targetCicilId);
+  const sisa = p.totalUtang;
+  p.totalUtang = 0;
+  p.riwayat.unshift({ id:buatId(), tipe:'bayar', waktu:new Date().toLocaleDateString('id-ID'), total:sisa, items:[{nama:'Pelunasan Penuh', qty:1, harga:sisa}] });
+  uploadKeFirebase();
+  tutupModal('modal-cicil');
+}
+
+// MANAGEMENT KELOLA MENU
+function renderStatMenu() {
+  document.getElementById('stat-menu').innerHTML = `<div class="stat-card"><div class="text-2xl font-extrabold text-brand-600">${daftarMenu.length}</div><div class="text-xs text-stone-500">Total Macam Menu</div></div>`;
+}
+function renderTabelMenu() {
+  document.getElementById('tbody-menu').innerHTML = daftarMenu.map(m=>`
+    <tr>
+      <td class="px-5 py-3 font-semibold">${m.nama}</td>
+      <td class="px-5 py-3"><span class="badge bg-stone-100">${m.kategori}</span></td>
+      <td class="px-5 py-3 text-right font-mono">${formatRupiah(m.harga)}</td>
+      <td class="px-5 py-3 text-center"><button onclick="hapusMenu('${m.id}')" class="text-red-500 font-bold text-xs">Hapus</button></td>
+    </tr>
+  `).join('');
+}
+function bukaFormMenu() {
+  const nm = prompt("Masukkan Nama Menu Baru:");
+  const kat = prompt("Kategori (Makanan/Minuman/Snack):", "Makanan");
+  const hg = parseFloat(prompt("Harga Jual (Angka Saja):"))||0;
+  if(nm && hg>0) {
+    daftarMenu.push({ id: buatId(), nama: nm, kategori: kat, harga: hg });
+    uploadKeFirebase();
+  }
+}
+function hapusMenu(id) {
+  if(confirm("Hapus menu ini?")) {
+    daftarMenu = daftarMenu.filter(x=>x.id!==id);
+    uploadKeFirebase();
+  }
+}
+
+// JAM AUTOMATIS
+setInterval(() => {
+  const n = new Date();
+  document.getElementById('jam-display').textContent = n.toLocaleTimeString('id-ID');
+  document.getElementById('tanggal-display').textContent = n.toLocaleDateString('id-ID', {weekday:'long', day:'numeric', month:'long'});
+}, 1000);
+</script>
+</body>
+</html>
